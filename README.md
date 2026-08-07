@@ -1,53 +1,36 @@
-# Flux Todo
+# Flux Todo — Multi-Page Edition
 
-A single-page, mobile-first to-do app with a warm gradient aesthetic, category color-coding, and a persistent per-user data store. No build step, no backend to run — it's plain HTML, CSS, and JavaScript.
+A mobile-first to-do app with a warm gradient aesthetic, category color-coding, and a persistent per-user data store — now split into a real multi-page site (one HTML file per sidebar section) instead of a single-page app. No build step, no backend to run.
 
-## Features
+## Pages
 
-- **Tasks** — create, edit, duplicate, pin, and delete tasks with a title, description, deadline, status, category, color, and optional emoji.
-- **Status workflow** — each task is `To Do`, `In Progress`, or `Completed`, with quick status tabs and counts at the top of the list.
-- **Categories** — default categories (Personal, Work, Shopping, Health) plus custom categories with your own name and color; deleting a category reassigns its tasks to the first remaining one.
-- **Search & sort** — live text search across title/description, and sort by date created, due date, alphabetical, or category color.
-- **Progress ring** — an animated completion ring and headline summary, with a confetti burst (plus a bonus gold sparkle animation) when you hit 100%.
-- **Task actions menu** (kebab menu) — change status, pin/unpin, move to another category, view full details, read the task aloud (Web Speech API), share (native share sheet or clipboard), edit, duplicate, or delete.
-- **Profile** — set a display name, upload an avatar image, and see total/completed task stats.
-- **Theme toggle** — light/dark mode, switchable from the sidebar or profile sheet.
-- **Transfer** — export all tasks, categories, and profile data as a `.json` backup file, or import a backup to merge it into your current data.
-- **Purge tools** — clear only completed tasks, or delete everything.
-- **Log out & reset** — clears your local name/avatar and dismissed banners without deleting your tasks.
-- Ambient decorative touches: an aurora background and a twinkling sparkle field.
+| File | Section |
+|---|---|
+| `index.html` | Tasks — list/board view, search, sort, progress ring |
+| `add-task.html` | Add Task (also used for editing via `?id=<taskId>`) |
+| `categories.html` | Categories — add, edit, delete |
+| `purge.html` | Purge Tasks — clear completed / delete all |
+| `transfer.html` | Transfer — export / import a `.json` backup |
+| `sync.html` | Sync Devices — storage status |
+| `profile.html` | Profile — name/avatar, theme, password field, logout |
+
+Every page shares the same sidebar, topbar, toast, and confirm-modal markup, and every navigation link is a real `<a href="...">` — no client-side routing, no single-page-app framework.
+
+## Scripts
+
+- **`core.js`** — loaded on every page. Holds shared state, storage (`window.storage` get/set on the `app-state` key, with a `localStorage` fallback), utilities, theme, sidebar, toast, and the confirm modal. Exposes everything through `window.Flux`.
+- **`tasks.js`**, **`task-form.js`**, **`categories.js`**, **`purge.js`**, **`transfer.js`**, **`sync.js`**, **`profile.js`** — one file per page, containing only that page's rendering and event logic. Each calls into `window.Flux` for shared state/utilities.
 
 ## Tech stack
 
-- **HTML/CSS/JS** — no frameworks, no build tools.
-- **Fonts** — Fraunces, Plus Jakarta Sans, and IBM Plex Mono, loaded from Google Fonts.
-- **Storage** — uses a `window.storage` key-value API (`get`/`set` on an `app-state` key) to persist all app data per user. This means the app expects to run in an environment that provides this storage API rather than using `localStorage` directly.
-
-## File structure
-
-```
-.
-├── index.html      # Markup: layout, sheets/modals, sidebar, forms
-├── styles.css       # Styling, theme variables, animations
-├── script.js        # App logic: state, rendering, storage, event wiring
-└── favicon.png       # App icon
-```
+- Plain HTML/CSS/JS — no frameworks, no build tools.
+- Fonts: Fraunces, Plus Jakarta Sans, IBM Plex Mono (Google Fonts).
+- Drag-and-drop kanban board on the Tasks page uses `sortable.min.js`.
 
 ## Running it
 
-Since it relies on the `window.storage` API for persistence rather than a generic browser storage mechanism, it's built to run inside a host environment that injects that API (rather than being opened as a bare static file). If you want to run it as a fully standalone static site, you'd need to supply a `window.storage` implementation (e.g. backed by `localStorage`) before `script.js` runs.
+Since it relies on the `window.storage` API for persistence, it's built to run inside a host environment that injects that API. Opened as a bare set of static files (e.g. via a local server), it automatically falls back to `localStorage` so it still works standalone — just serve the folder over HTTP (opening `index.html` directly via `file://` will not work because of the ES-module-free but fetch/storage-dependent script loading; use something like `npx serve` or `python3 -m http.server`).
 
 ## Data model
 
-State is a single JSON object with:
-- `tasks[]` — id, title, description, deadline, status, categoryId, emoji, pinned, createdAt
-- `categories[]` — id, name, color
-- `profile` — name, avatar (data URL), registered timestamp
-- `settings` — theme, sort order, dismissed-banner flag, greeting subtitle index
-
-Exports/imports use this same shape (minus `settings`) as the backup file format.
-
-## Notes
-
-- All rendering is done via direct DOM manipulation and `innerHTML`, with no framework.
-- Task list writes are debounced (150ms) before saving to storage.
+Unchanged from the single-page version — a single JSON object with `tasks[]`, `categories[]`, `profile`, and `settings`, stored under the `app-state` key. Export/import in Transfer uses the same shape (minus `settings`).

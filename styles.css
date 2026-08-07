@@ -865,3 +865,20 @@ input, textarea, select{font-family:inherit;}
 @media (prefers-reduced-motion: reduce){
   *{animation-duration:0.001s !important; transition-duration:0.001s !important;}
 }
+/* ---------------- Multi-page layout additions ---------------- */
+.page-main{max-width:640px; margin:0 auto; padding-bottom:60px;}
+.page-panel{
+  background:var(--surface); border:1px solid var(--border); border-radius:22px;
+  padding:20px 22px 26px; box-shadow:0 10px 30px rgba(0,0,0,.06), inset 0 1px 0 var(--shine);
+}
+.page-title-row{display:flex; align-items:center; justify-content:space-between; margin-bottom:18px;}
+.page-title-row h1{margin:0; font-size:22px;}
+.back-link{
+  display:inline-flex; align-items:center; gap:6px; font-size:13.5px; font-weight:700; color:var(--ink-muted);
+  margin-bottom:14px; text-decoration:none;
+}
+.back-link svg{width:15px;height:15px;}
+.back-link:hover{color:var(--accent);}
+
+/* Anchor tags reused as buttons (sidebar nav links, avatar link) */
+.nav-item, .avatar-btn{text-decoration:none; cursor:pointer;}
