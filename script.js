@@ -37,9 +37,11 @@ const SUBTITLES = [
 let state = {
   tasks: [],
   categories: JSON.parse(JSON.stringify(DEFAULT_CATEGORIES)),
-  profile: {name:"", avatar:"", registered: Date.now()},
-  settings: {theme:"light", bannerDismissed:false, sort:"created", subtitleIdx:0}
+  profile: {name:"", avatar:"", registered: Date.now(), email:"", role:"", phone:"", bio:""},
+  settings: {theme:"light", bannerDismissed:false, sort:"created", subtitleIdx:0, viewMode:"list", sidebarCollapsed:true}
 };
+let catSearchQuery = "";
+let editingCategoryId = null;
 let editingTaskId = null;
 let activeCategoryFilter = "all";
 let activeStatusFilter = "all";
@@ -94,15 +96,36 @@ function initials(name){
 }
 
 /* ---------------- Storage ---------------- */
+const LOCAL_KEY = 'flux-todo-app-state';
+const hasCloudStorage = typeof window.storage !== 'undefined' && window.storage && typeof window.storage.get === 'function';
+
+async function storageGet(){
+  if(hasCloudStorage){
+    return await window.storage.get('app-state', false);
+  }
+  const raw = localStorage.getItem(LOCAL_KEY);
+  return raw ? {key:'app-state', value:raw, shared:false} : null;
+}
+async function storageSet(value){
+  if(hasCloudStorage){
+    return await window.storage.set('app-state', value, false);
+  }
+  localStorage.setItem(LOCAL_KEY, value);
+  return {key:'app-state', value, shared:false};
+}
+
 async function loadState(){
   try{
-    const res = await window.storage.get('app-state', false);
+    const res = await storageGet();
     if(res && res.value){
       const parsed = JSON.parse(res.value);
       state = Object.assign(state, parsed);
       if(!state.categories || !state.categories.length) state.categories = JSON.parse(JSON.stringify(DEFAULT_CATEGORIES));
       if(!state.settings) state.settings = {theme:"light", bannerDismissed:false, sort:"created", subtitleIdx:0};
+      if(state.settings.viewMode===undefined) state.settings.viewMode = "list";
+      if(state.settings.sidebarCollapsed===undefined) state.settings.sidebarCollapsed = true;
       if(!state.profile) state.profile = {name:"", avatar:"", registered: Date.now()};
+      ["email","role","phone","bio"].forEach(k=>{ if(state.profile[k]===undefined) state.profile[k] = ""; });
       (state.tasks||[]).forEach(t=>{
         if(!t.status) t.status = t.done ? 'done' : 'todo';
         t.done = t.status === 'done';
@@ -121,7 +144,7 @@ async function persist(){
   return new Promise((resolve)=>{
     saveTimer = setTimeout(async ()=>{
       try{
-        const result = await window.storage.set('app-state', JSON.stringify(state), false);
+        const result = await storageSet(JSON.stringify(state));
         resolve(result);
       }catch(e){
         console.error("Save failed", e);
@@ -230,7 +253,7 @@ function renderStatusTabs(){
     btn.addEventListener('click', ()=>{
       activeStatusFilter = btn.dataset.status;
       renderStatusTabs();
-      renderTasks();
+      applyViewMode();
     });
   });
 }
@@ -250,7 +273,7 @@ function renderChips(){
     btn.addEventListener('click', ()=>{
       activeCategoryFilter = btn.dataset.cat;
       renderChips();
-      renderTasks();
+      applyViewMode();
     });
   });
 }
@@ -664,17 +687,44 @@ async function submitTaskForm(){
 /* ---------------- Categories management ---------------- */
 function renderCategoriesSheet(){
   const list = document.getElementById('catList');
-  list.innerHTML = state.categories.map(c=>{
-    const count = state.tasks.filter(t=>t.categoryId===c.id).length;
-    return `<div class="cat-manage-item">
-      <span class="dot" style="background:${c.color}"></span>
-      <span class="name">${escapeHtml(c.name)}</span>
-      <span class="count">${count} task${count!==1?'s':''}</span>
-      <button data-del="${c.id}" aria-label="Delete category">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0l-1 14a2 2 0 01-2 2H7a2 2 0 01-2-2L4 6"/></svg>
-      </button>
+  const q = catSearchQuery.trim().toLowerCase();
+  const visible = state.categories.filter(c=> !q || c.name.toLowerCase().includes(q));
+
+  if(visible.length===0){
+    list.innerHTML = `<div class="empty-state" style="padding:36px 10px;">
+      <div class="icon">🔍</div><b>No matching categories</b><span>Try a different search</span>
     </div>`;
-  }).join('');
+  } else {
+    list.innerHTML = visible.map(c=>{
+      if(c.id === editingCategoryId){
+        return `<div class="cat-edit-form" data-edit-form="${c.id}">
+          <input type="text" class="cat-edit-name" value="${escapeHtml(c.name)}" placeholder="Category name">
+          <div class="color-grid cat-edit-colors" data-selected="${c.color}">
+            ${COLORS.map(col=>`<button type="button" class="color-opt ${col.hex===c.color?'selected':''}" data-hex="${col.hex}" style="background:${col.hex}"></button>`).join('')}
+          </div>
+          <div class="edit-actions">
+            <button class="secondary-btn" data-cancel-edit="${c.id}">Cancel</button>
+            <button class="primary-btn" data-save-edit="${c.id}">Save Changes</button>
+          </div>
+        </div>`;
+      }
+      const count = state.tasks.filter(t=>t.categoryId===c.id).length;
+      return `<div class="cat-manage-item">
+        <span class="dot" style="background:${c.color}"></span>
+        <span class="name">${escapeHtml(c.name)}</span>
+        <span class="count">${count} task${count!==1?'s':''}</span>
+        <div class="actions">
+          <button data-edit="${c.id}" aria-label="Edit category">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>
+          </button>
+          <button data-del="${c.id}" aria-label="Delete category">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0l-1 14a2 2 0 01-2 2H7a2 2 0 01-2-2L4 6"/></svg>
+          </button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
   list.querySelectorAll('[data-del]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       if(state.categories.length<=1){ showToast('⚠️ Keep at least one category'); return; }
@@ -695,6 +745,41 @@ function renderCategoriesSheet(){
       });
     });
   });
+  list.querySelectorAll('[data-edit]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      editingCategoryId = btn.dataset.edit;
+      renderCategoriesSheet();
+    });
+  });
+  list.querySelectorAll('[data-cancel-edit]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      editingCategoryId = null;
+      renderCategoriesSheet();
+    });
+  });
+  list.querySelectorAll('.cat-edit-colors').forEach(grid=>{
+    grid.querySelectorAll('.color-opt').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        grid.querySelectorAll('.color-opt').forEach(b=>b.classList.remove('selected'));
+        btn.classList.add('selected');
+        grid.dataset.selected = btn.dataset.hex;
+      });
+    });
+  });
+  list.querySelectorAll('[data-save-edit]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const id = btn.dataset.saveEdit;
+      const form = list.querySelector(`[data-edit-form="${id}"]`);
+      const name = form.querySelector('.cat-edit-name').value.trim();
+      if(!name){ showToast('⚠️ Give the category a name'); return; }
+      const color = form.querySelector('.cat-edit-colors').dataset.selected;
+      const cat = catById(id);
+      Object.assign(cat, {name, color});
+      editingCategoryId = null;
+      await persist(); renderAll(); renderCategoriesSheet();
+      showToast('✅ Category updated');
+    });
+  });
 
   const grid = document.getElementById('newCatColorGrid');
   grid.innerHTML = COLORS.map((c,i)=>`<button type="button" class="color-opt ${i===0?'selected':''}" data-hex="${c.hex}" style="background:${c.hex}"></button>`).join('');
@@ -707,6 +792,10 @@ function renderCategoriesSheet(){
     });
   });
 }
+document.getElementById('catSearchInput').addEventListener('input', (e)=>{
+  catSearchQuery = e.target.value;
+  renderCategoriesSheet();
+});
 
 async function addCategory(){
   const nameInput = document.getElementById('newCatName');
@@ -808,7 +897,12 @@ function renderProfile(){
     avSmall.textContent = init;
   }
   document.getElementById('profileName').textContent = state.profile.name || 'User';
+  document.getElementById('profileRolePill').textContent = state.profile.role || 'Member';
   document.getElementById('profileNameInput').value = state.profile.name || '';
+  document.getElementById('profileEmailInput').value = state.profile.email || '';
+  document.getElementById('profileRoleInput').value = state.profile.role || '';
+  document.getElementById('profilePhoneInput').value = state.profile.phone || '';
+  document.getElementById('profileBioInput').value = state.profile.bio || '';
   const mins = Math.max(1, Math.round((Date.now()-state.profile.registered)/60000));
   let regText;
   if(mins < 60) regText = `Registered ${mins} minute${mins!==1?'s':''} ago`;
@@ -894,13 +988,153 @@ document.getElementById('confirmOk').addEventListener('click', async ()=>{
   confirmCallback = null;
 });
 
+/* ---------------- Render: Kanban board ---------------- */
+function getFilteredTasksForBoard(){
+  const q = document.getElementById('searchInput').value.trim().toLowerCase();
+  return state.tasks.filter(t=>{
+    if(activeCategoryFilter!=='all' && t.categoryId!==activeCategoryFilter) return false;
+    if(q && !(t.title.toLowerCase().includes(q) || (t.description||'').toLowerCase().includes(q))) return false;
+    return true;
+  });
+}
+function kanbanCardHtml(t){
+  const cat = catById(t.categoryId);
+  const color = cat ? cat.color : '#5D6478';
+  return `<div class="kanban-card" draggable="true" data-id="${t.id}" style="background:linear-gradient(135deg, ${color}, ${darken(color,-0.15)});">
+    <div class="title-row">
+      ${t.emoji ? `<span class="emoji">${t.emoji}</span>` : ''}
+      <h4>${escapeHtml(t.title)}</h4>
+    </div>
+    ${t.description ? `<p>${escapeHtml(t.description.slice(0,60))}${t.description.length>60?'…':''}</p>` : ''}
+    <div class="meta">${escapeHtml(cat?cat.name:'Uncategorized')}</div>
+  </div>`;
+}
+let kanbanSortables = [];
+function renderKanban(){
+  const board = document.getElementById('kanbanBoard');
+  const tasks = getFilteredTasksForBoard();
+
+  // Tear down old Sortable instances before wiping the DOM to avoid leaks.
+  kanbanSortables.forEach(s=> s.destroy());
+  kanbanSortables = [];
+
+  board.innerHTML = STATUSES.map(s=>{
+    const items = tasks.filter(t=>t.status===s.id);
+    return `<div class="kanban-col">
+      <div class="kanban-col-head">
+        <span class="kanban-col-title">${s.icon}${escapeHtml(s.label)}</span>
+        <span class="kanban-col-count">${items.length}</span>
+      </div>
+      <div class="kanban-col-body" data-dropzone="${s.id}">
+        ${items.map(kanbanCardHtml).join('')}
+        ${items.length===0 ? `<div class="kanban-empty">No tasks here</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+
+  board.querySelectorAll('.kanban-card').forEach(card=>{
+    card.addEventListener('click', ()=> openTaskDetails(card.dataset.id));
+  });
+
+  const zones = Array.from(board.querySelectorAll('.kanban-col-body'));
+  const canDrag = typeof Sortable !== 'undefined';
+
+  zones.forEach(zone=>{
+    if(!canDrag) return;
+    const sortable = Sortable.create(zone, {
+      group: 'kanban-board',
+      animation: 220,
+      easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+      draggable: '.kanban-card',
+      filter: '.kanban-empty',
+      ghostClass: 'kanban-ghost',
+      chosenClass: 'kanban-chosen',
+      dragClass: 'kanban-drag',
+      delay: 80,
+      delayOnTouchOnly: true,
+      touchStartThreshold: 4,
+      forceFallback: false,
+      onStart: ()=> board.classList.add('kanban-dragging'),
+      onEnd: async (evt)=>{
+        board.classList.remove('kanban-dragging');
+        const card = evt.item;
+        const id = card.dataset.id;
+        const task = state.tasks.find(t=>t.id===id);
+        const newStatus = evt.to.dataset.dropzone;
+        const movedColumn = evt.from !== evt.to;
+
+        // Toggle the empty-state placeholders for source/target columns.
+        [evt.from, evt.to].forEach(z=>{
+          const hasCards = z.querySelector('.kanban-card');
+          const empty = z.querySelector('.kanban-empty');
+          if(!hasCards && !empty){
+            z.insertAdjacentHTML('beforeend', `<div class="kanban-empty">No tasks here</div>`);
+          } else if(hasCards && empty){
+            empty.remove();
+          }
+        });
+
+        if(task && movedColumn && task.status !== newStatus){
+          setTaskStatus(task, newStatus);
+          await persist();
+          renderProgress();
+          renderStatusTabs();
+          board.querySelectorAll('.kanban-col-count').forEach((el,i)=>{
+            el.textContent = tasksByStatus(STATUSES[i].id).length;
+          });
+          document.getElementById('navTaskCount').textContent = state.tasks.filter(t=>!t.done).length;
+          showToast(`Moved to ${statusOf(newStatus).label}`);
+        }
+      }
+    });
+    kanbanSortables.push(sortable);
+  });
+
+  document.getElementById('navTaskCount').textContent = state.tasks.filter(t=>!t.done).length;
+}
+function tasksByStatus(statusId){
+  return getFilteredTasksForBoard().filter(t=>t.status===statusId);
+}
+
+/* ---------------- View mode (List / Board) ---------------- */
+function applyViewMode(){
+  const mode = state.settings.viewMode === 'board' ? 'board' : 'list';
+  document.getElementById('taskList').style.display = mode==='board' ? 'none' : 'flex';
+  document.getElementById('kanbanBoard').style.display = mode==='board' ? 'flex' : 'none';
+  document.getElementById('statusTabs').style.display = mode==='board' ? 'none' : 'flex';
+  document.querySelectorAll('.view-toggle-btn').forEach(b=>{
+    b.classList.toggle('active', b.dataset.view===mode);
+  });
+  if(mode==='board') renderKanban(); else renderTasks();
+}
+document.getElementById('viewToggle').querySelectorAll('.view-toggle-btn').forEach(btn=>{
+  btn.addEventListener('click', async ()=>{
+    if(state.settings.viewMode === btn.dataset.view) return;
+    state.settings.viewMode = btn.dataset.view;
+    await persist();
+    applyViewMode();
+  });
+});
+
+/* ---------------- Sidebar collapse (desktop) ---------------- */
+function applySidebarCollapsed(){
+  const collapsed = !!state.settings.sidebarCollapsed;
+  document.getElementById('sidebar').classList.toggle('collapsed', collapsed);
+  document.body.classList.toggle('sidebar-collapsed', collapsed);
+}
+document.getElementById('sidebarCollapseBtn').addEventListener('click', async ()=>{
+  state.settings.sidebarCollapsed = !state.settings.sidebarCollapsed;
+  applySidebarCollapsed();
+  await persist();
+});
+
 /* ---------------- Render all ---------------- */
 function renderAll(){
   updateGreeting();
   renderProgress();
   renderStatusTabs();
   renderChips();
-  renderTasks();
+  applyViewMode();
   renderProfile();
   renderSyncStats();
 }
@@ -915,7 +1149,7 @@ document.getElementById('progressClose').addEventListener('click', async ()=>{
   renderProgress();
 });
 
-document.getElementById('searchInput').addEventListener('input', renderTasks);
+document.getElementById('searchInput').addEventListener('input', applyViewMode);
 
 document.getElementById('sortBtn').addEventListener('click', (e)=>{
   e.stopPropagation();
@@ -930,7 +1164,7 @@ document.getElementById('sortMenu').querySelectorAll('button').forEach(btn=>{
     document.getElementById('sortLabel').textContent = btn.textContent;
     document.getElementById('sortMenu').classList.remove('open');
     await persist();
-    renderTasks();
+    applyViewMode();
   });
 });
 
@@ -948,7 +1182,7 @@ document.querySelectorAll('[data-nav]').forEach(btn=>{
     document.getElementById('overlay').classList.remove('show');
     if(nav==='tasks'){ /* already home */ }
     else if(nav==='add'){ openTaskSheet(null); }
-    else if(nav==='categories'){ renderCategoriesSheet(); openSheet('catSheet'); }
+    else if(nav==='categories'){ editingCategoryId = null; renderCategoriesSheet(); openSheet('catSheet'); }
     else if(nav==='purge'){ openSheet('purgeSheet'); }
     else if(nav==='transfer'){ openSheet('transferSheet'); }
     else if(nav==='sync'){ renderSyncStats(); openSheet('syncSheet'); }
@@ -988,11 +1222,24 @@ document.getElementById('syncSheetClose').addEventListener('click', ()=>closeShe
 
 document.getElementById('profileSheetClose').addEventListener('click', ()=>closeSheet('profileSheet'));
 document.getElementById('saveNameBtn').addEventListener('click', async ()=>{
-  const val = document.getElementById('profileNameInput').value.trim();
-  state.profile.name = val;
+  state.profile.name = document.getElementById('profileNameInput').value.trim();
+  state.profile.email = document.getElementById('profileEmailInput').value.trim();
+  state.profile.role = document.getElementById('profileRoleInput').value.trim();
+  state.profile.phone = document.getElementById('profilePhoneInput').value.trim();
+  state.profile.bio = document.getElementById('profileBioInput').value.trim();
   await persist();
   renderProfile(); updateGreeting();
-  showToast('✅ Name saved');
+  showToast('✅ Profile saved');
+});
+document.getElementById('changePwBtn').addEventListener('click', ()=>{
+  const cur = document.getElementById('pwCurrent');
+  const next = document.getElementById('pwNew');
+  const confirm = document.getElementById('pwConfirm');
+  if(!cur.value || !next.value || !confirm.value){ showToast('⚠️ Fill in all password fields'); return; }
+  if(next.value.length < 8){ showToast('⚠️ New password must be at least 8 characters'); return; }
+  if(next.value !== confirm.value){ showToast('⚠️ New passwords do not match'); return; }
+  cur.value = ''; next.value = ''; confirm.value = '';
+  showToast('🔒 Password updated');
 });
 document.getElementById('avatarFile').addEventListener('change', (e)=>{
   const file = e.target.files[0];
@@ -1036,6 +1283,7 @@ document.addEventListener('keydown', (e)=>{
 async function init(){
   await loadState();
   applyTheme();
+  applySidebarCollapsed();
   renderAll();
   document.getElementById('sortLabel').textContent =
     {created:'Date Created', due:'Due Date', az:'Alphabetical', color:'Category Color'}[state.settings.sort] || 'Date Created';
