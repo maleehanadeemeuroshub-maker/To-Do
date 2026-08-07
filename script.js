@@ -1038,6 +1038,7 @@ function renderKanban(){
 
   const zones = Array.from(board.querySelectorAll('.kanban-col-body'));
   const canDrag = typeof Sortable !== 'undefined';
+  if(!canDrag) console.warn('Flux: Sortable library not loaded — kanban drag & drop is disabled. Check that sortable.min.js is present next to index.html and loaded without errors.');
 
   zones.forEach(zone=>{
     if(!canDrag) return;
